@@ -1,7 +1,5 @@
 import { mkdir } from "node:fs/promises";
 
-// --- Config ---
-
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL;
 const LANG = (process.env.HETZNER_STATUS_LANG || "en") as "en" | "de";
 const parsedInterval = Number(process.env.POLL_INTERVAL_SECONDS);
@@ -10,13 +8,12 @@ const POLL_INTERVAL =
 const STATE_FILE = process.env.STATE_FILE_PATH || "./state.json";
 const STATUS_URL = `https://status.hetzner.com/${LANG}`;
 const DEBUG_COUNT = Number(process.env.DEBUG_POST_LAST) || 0;
+const STATE_MAX_AGE_DAYS = Number(process.env.STATE_MAX_AGE_DAYS) || 30;
 
 if (!SLACK_WEBHOOK_URL) {
   console.error("SLACK_WEBHOOK_URL is required");
   process.exit(1);
 }
-
-// --- Types ---
 
 interface IncidentUpdate {
   id: number;
@@ -68,8 +65,6 @@ interface StoredState {
   };
 }
 
-// --- State Management ---
-
 async function loadState(): Promise<StoredState> {
   try {
     const file = Bun.file(STATE_FILE);
@@ -77,7 +72,7 @@ async function loadState(): Promise<StoredState> {
       return JSON.parse(await file.text());
     }
   } catch {
-    // First run or corrupt state - start fresh
+    // First run or corrupt state - Start fresh
   }
   return {};
 }
@@ -89,8 +84,6 @@ async function saveState(state: StoredState): Promise<void> {
   }
   await Bun.write(STATE_FILE, JSON.stringify(state, null, 2));
 }
-
-// --- Hetzner Status Fetching ---
 
 async function fetchStatusPage(): Promise<PageData> {
   const response = await fetch(STATUS_URL);
@@ -125,8 +118,6 @@ async function fetchStatusPage(): Promise<PageData> {
     },
   };
 }
-
-// --- Slack Messaging ---
 
 const TYPE_EMOJI: Record<string, string> = {
   outage: "\u{1F6A8}",
@@ -257,8 +248,6 @@ async function postToSlack(message: object): Promise<void> {
   }
 }
 
-// --- Main Loop ---
-
 function getAllIncidents(data: PageData): { incident: Incident; category: string }[] {
   const results: { incident: Incident; category: string }[] = [];
 
@@ -284,6 +273,7 @@ async function checkAndNotify(state: StoredState): Promise<StoredState> {
   const allIncidents = getAllIncidents(data);
   // Preserve previous state so incidents that temporarily drop off the page aren't re-notified
   const newState: StoredState = { ...state };
+  const currentIds = new Set<string>();
   let notified = 0;
 
   for (const { incident, category } of allIncidents) {
@@ -291,6 +281,7 @@ async function checkAndNotify(state: StoredState): Promise<StoredState> {
     const updateCount = incident.incidentUpdates.length;
     const prev = state[key];
 
+    currentIds.add(key);
     newState[key] = {
       updatedAt: incident.updatedAt,
       updateCount,
@@ -320,6 +311,19 @@ async function checkAndNotify(state: StoredState): Promise<StoredState> {
 
   if (notified > 0) {
     console.log(`[${new Date().toISOString()}] Posted ${notified} update(s) to Slack`);
+  }
+
+  // Prune entries that are no longer on the status page and are older than STATE_MAX_AGE_DAYS
+  const cutoff = Date.now() - STATE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  let pruned = 0;
+  for (const [key, entry] of Object.entries(newState)) {
+    if (!currentIds.has(key) && new Date(entry.updatedAt).getTime() < cutoff) {
+      delete newState[key];
+      pruned++;
+    }
+  }
+  if (pruned > 0) {
+    console.log(`[${new Date().toISOString()}] Pruned ${pruned} stale state entries`);
   }
 
   return newState;
