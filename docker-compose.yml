@@ -1,0 +1,14 @@
+services:
+  hetzner-status-bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - HETZNER_STATUS_LANG=${HETZNER_STATUS_LANG:-en}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-300}
+      - STATE_FILE_PATH=/data/state.json
+    volumes:
+      - bot-data:/data
+
+volumes:
+  bot-data:

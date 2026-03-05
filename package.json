@@ -1,0 +1,13 @@
+{
+  "name": "hetzner-status-slack-bot",
+  "version": "1.0.0",
+  "description": "Posts Hetzner status updates to Slack",
+  "main": "index.ts",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@types/bun": "^1.3.10",
+    "@types/node": "^25.3.3"
+  }
+}
